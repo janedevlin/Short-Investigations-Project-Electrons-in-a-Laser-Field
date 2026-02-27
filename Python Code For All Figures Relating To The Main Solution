@@ -1,0 +1,113 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import brentq
+
+#return condition function using x(t)=0 and equation found in part 1, using tau = wt 
+def f_tau(tau, phi):
+    return np.cos(phi) - np.cos(tau + phi) - tau * np.sin(phi)
+
+#velocity from part 1 but with tau=wr, setting e=E_0=m=w=1 since constants and just finding dimensionless energy in this
+def v_tau(tau, phi, e=1.0, E0=1.0, m=1.0, w=1.0):
+    return (e * E0 / (m * w)) * (np.sin(tau + phi) - np.sin(phi))
+
+#Finding the first positive root T_r>0 of f(T_r;phi)=0, if it exists in (tau_min, tau_max)
+def first_return_tau(phi, tau_max=6*np.pi, N=20000, tau_min=1e-6):
+
+    taus = np.linspace(tau_min, tau_max, N + 1)
+    vals = f_tau(taus, phi)
+
+    #Looking for the first sign change
+    for i in range(len(taus) - 1):
+        a, b = taus[i], taus[i + 1]
+        fa, fb = vals[i], vals[i + 1]
+
+        #if there is an exact hit
+        if fa == 0.0:
+            return a
+        #bracket
+        if fa * fb < 0.0:
+            return brentq(lambda t: f_tau(t, phi), a, b)
+
+    return None  
+
+#Goes through phases between -pi/2 and pi/2, determines whether returns or not, computes T_r, v_return and K(phi)
+def scan_phases(
+    phi_min=-np.pi/2, phi_max=np.pi/2, n_phi=801,
+    tau_max=6*np.pi, N_tau=20000,
+    e=1.0, E0=1.0, m=1.0, w=1.0
+):
+    phis = np.linspace(phi_min, phi_max, n_phi)
+
+    tau_rs = np.full_like(phis, np.nan, dtype=float)
+    v_rs   = np.full_like(phis, np.nan, dtype=float)
+    Ks     = np.full_like(phis, np.nan, dtype=float)
+
+    for i, phi in enumerate(phis):
+        tau_r = first_return_tau(phi, tau_max=tau_max, N=N_tau)
+        if tau_r is None:
+            continue  #stays NaN = "no return"
+        
+        vel = v_tau(tau_r, phi, e=e, E0=E0, m=m, w=w)
+        K   = 0.5 * m * vel**2
+
+        tau_rs[i] = tau_r
+        v_rs[i]   = vel
+        Ks[i]     = K
+
+    return phis, tau_rs, v_rs, Ks
+
+def main():
+    #calling the scanning through the phases
+    phis, tau_rs, v_rs, Ks = scan_phases(
+        phi_min=-np.pi/2, phi_max=np.pi/2, n_phi=801,
+        tau_max=6*np.pi, N_tau=20000,
+        e=1.0, E0=1.0, m=1.0, w=1.0
+    )
+
+    returns = np.isfinite(tau_rs)
+
+
+    #not for report
+    if np.any(returns):
+        imax = np.nanargmax(Ks)
+        print("\nMaximum return energy:")
+        print("phi_max   =", phis[imax])
+        print("K_max     =", Ks[imax])
+        print("tau_r_max =", tau_rs[imax])
+        print("v_return  =", v_rs[imax])
+    else:
+        print("\nNo returns found in the chosen search window.")
+
+    #In github called : Phases That Return
+    #Plots figure of which phases the electron returns for and which doesnt
+    plt.figure(figsize=(7, 3))
+    plt.plot(phis, returns.astype(int), '.', markersize=3)
+    plt.yticks([0, 1], ["no return", "return"])
+    plt.xlabel(r"Phase $\phi$ (rad)")
+    plt.title(r"Return to origin vs phase (for $\tau\leq 6\pi$)")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+
+    #In report called : Figure 1
+    #For phases that the electron returns for , plots the kinetic energy at point of return against the phase
+    plt.figure(figsize=(7, 4))
+    plt.plot(phis[returns], Ks[returns], '.', markersize=3)
+    plt.xlabel(r"Phase $\phi$ (rad)")
+    plt.ylabel(r"Return kinetic energy $K(\phi)$")
+    plt.title(r"$K(\phi)$ for phases that return")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+
+    #In github called : First Return Time Against Phase
+    #Plots time of return against phase for phases the electrons return for
+    plt.figure(figsize=(7, 4))
+    plt.plot(phis[returns], tau_rs[returns], '.', markersize=3)
+    plt.xlabel(r"Phase $\phi$ (rad)")
+    plt.ylabel(r"First return time $\tau_r(\phi)$")
+    plt.title(r"First return time vs phase (returning trajectories)")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+
+    plt.show()
+    
+main()
