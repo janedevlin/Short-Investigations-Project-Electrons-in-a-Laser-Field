@@ -1,0 +1,201 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import solve_ivp
+
+#constants
+e = 1.602176634e-19
+m = 9.1093837015e-31
+c = 2.99792458e8
+ell0 = 8.8541878128e-12
+a0 = 5.29177210903e-11
+
+#He+ collision radius
+r_crit = a0 / 2
+
+#Laser parameters
+lam_nm = 800.0
+lam = lam_nm * 1e-9
+omega = 2*np.pi*c/lam
+T = 2*np.pi/omega
+
+I = 2.87e18  # W/m^2
+E0 = np.sqrt(2*I/(c*ell0))
+
+#quiver amplitude
+a_q = e * E0 / (m * omega**2)
+
+#Ellpitically polarised field and ode
+def E_field(t, phi, ell):
+    phase = omega*t + phi
+    Ex = E0 * np.cos(phase)
+    Ey = ell * E0 * np.sin(phase)
+    return Ex, Ey
+
+def ode(t, y, phi, ell):
+    x, y_pos, vx, vy = y
+    Ex, Ey = E_field(t, phi, ell)
+    ax = (-e/m) * Ex
+    ay = (-e/m) * Ey
+    return [vx, vy, ax, ay]
+
+#Trajectory analysis, requires the electron to leave and then minimum after leaving
+def analyze_trajectory(phi, ell, n_cycles=3, n_samples=6000, rcrit=r_crit, leave_factor=10.0):
+    t_eval = np.linspace(0.0, n_cycles*T, n_samples)
+    y0 = [0.0, 0.0, 0.0, 0.0]
+
+    sol = solve_ivp(
+        fun=lambda t, y: ode(t, y, phi, ell),
+        t_span=(0.0, n_cycles*T),
+        y0=y0,
+        t_eval=t_eval,
+        rtol=1e-9,
+        atol=1e-12
+    )
+
+    x = sol.y[0]
+    y_pos = sol.y[1]
+    vx = sol.y[2]
+    vy = sol.y[3]
+
+    r = np.sqrt(x**2 + y_pos**2)
+
+    r_leave = leave_factor * rcrit
+    leave_indices = np.where(r >= r_leave)[0]
+    if len(leave_indices) == 0:
+        return False, np.nan, np.nan  # never left
+
+    left_idx = leave_indices[0]
+    if left_idx + 1 >= len(r):
+        return False, np.nan, np.nan
+
+    r_after = r[left_idx+1:]
+    r_min_after = np.min(r_after)
+
+    if r_min_after > rcrit:
+        return False, r_min_after, np.nan
+
+    coll_rel = np.argmin(r_after)
+    coll_idx = (left_idx + 1) + coll_rel
+
+    v2 = vx[coll_idx]**2 + vy[coll_idx]**2
+    K_eV = (0.5 * m * v2) / e
+    return True, r_min_after, K_eV
+
+#Goes through different phases and ellipticity
+def sweep(phi_min=-np.pi/2, phi_max=np.pi/2, n_phi=401,
+          ell_list=None, n_cycles=3, n_samples=6000,
+          rcrit=r_crit, leave_factor=10.0):
+
+    if ell_list is None:
+        ell_list = np.concatenate([
+            np.linspace(0.0, 0.02, 21),
+            np.linspace(0.025, 1.0, 40)
+        ])
+
+    phis = np.linspace(phi_min, phi_max, n_phi)
+
+    frac_return = []
+    Kmax_list = []
+    rmin_after_map = np.full((len(ell_list), len(phis)), np.nan)
+
+    for j, ell_ in enumerate(ell_list):
+        returned_flags = np.zeros(len(phis), dtype=bool)
+        K_returns = []
+
+        for i, phi in enumerate(phis):
+            returned, r_min_after, K_eV = analyze_trajectory(
+                phi, ell_,
+                n_cycles=n_cycles, n_samples=n_samples,
+                rcrit=rcrit, leave_factor=leave_factor
+            )
+            rmin_after_map[j, i] = r_min_after
+
+            if returned:
+                returned_flags[i] = True
+                K_returns.append(K_eV)
+
+        frac = returned_flags.mean()
+        frac_return.append(frac)
+
+        Kmax = np.max(K_returns) if len(K_returns) > 0 else np.nan
+        Kmax_list.append(Kmax)
+
+        #print(f"[rcrit={rcrit:.3e}] ell={ell_:>5.3f}  return_fraction={frac:>6.3f}  Kmax(eV)={Kmax}")
+
+    return phis, np.array(ell_list), np.array(frac_return), np.array(Kmax_list), rmin_after_map
+
+# using r_c = a0 / 2
+ell_list = np.concatenate([
+    np.linspace(0.0, 0.02, 21),
+    np.linspace(0.025, 1.0, 40)
+])
+
+phis, ell_list, frac_return, Kmax_list, rmin_after_map = sweep(
+    n_phi=401, ell_list=ell_list, n_cycles=3, n_samples=6000,
+    rcrit=r_crit, leave_factor=10.0
+)
+
+#Plotting 
+
+mask_zoom = ell_list <= 0.02
+
+#In report : Figure 2
+#Plot of return fraction vs ellipticity 
+plt.figure(figsize=(7,4))
+plt.plot(ell_list[mask_zoom], frac_return[mask_zoom], 'o-', markersize=5)
+plt.xlabel("Ellipticity ε")
+plt.ylabel(r"Recollision probability$")
+plt.title(f"Recollision probability vs ellipticity for recollision radius of $a0/2$ ")
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+
+#In report : Figure 3
+# Plot of max return energy vs ellipticity
+plt.figure(figsize=(7,4))
+plt.plot(ell_list[mask_zoom], Kmax_list[mask_zoom], 'o-', markersize=5)
+plt.xlabel("Ellipticity ε")
+plt.ylabel("Max kinetic energy of electron at closest return distance (eV)")
+plt.title(r"Max kinetic energy of electrons vs ellipticity for recollision radius of $a_0/2$")
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+
+#In github called : HeatMap For Elliptical Polarisation
+# Plot of heatmap 
+plt.figure(figsize=(8,4))
+plt.imshow(
+    (rmin_after_map / r_crit),
+    aspect='auto',
+    origin='lower',
+    extent=[phis[0], phis[-1], ell_list[0], ell_list[-1]],
+    cmap='viridis',
+    vmin=0.0,
+    vmax=10.0
+)
+plt.colorbar(label=r"$r_{\min,after}/(a_0/2)$")
+plt.xlabel(r"Phase $\phi$ (rad)")
+plt.ylabel("Ellipticity ε")
+plt.title(r"Closest approach after leaving with recollision radius $a_0/2$")
+plt.tight_layout()
+
+#In github called : Return Probability with larger collision radius
+#Plot to show impact of a larger collision radius
+rcrit_big = 0.02 * a_q
+
+
+ell_zoom = np.linspace(0.0, 0.02, 21)
+
+_, _, frac_big, _, _ = sweep(
+    n_phi=401, ell_list=ell_zoom, n_cycles=3, n_samples=6000,
+    rcrit=rcrit_big, leave_factor=10.0
+)
+
+plt.figure(figsize=(7,4))
+plt.plot(ell_zoom, frac_big, 'o-', markersize=5)
+plt.xlabel("Ellipticity ε")
+plt.ylabel(r"Recollision probability")
+plt.title(r"Recollision probability vs ellipticity for recollision radius of ($r_c=0.02\,a_q$)")
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+
+plt.show()
+
